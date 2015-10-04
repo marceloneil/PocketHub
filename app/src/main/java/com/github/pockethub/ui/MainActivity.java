@@ -1,12 +1,18 @@
 package com.github.pockethub.ui;
 
+
 import static com.github.pockethub.ui.NavigationDrawerObject.TYPE_SEPERATOR;
+
+import android.accounts.Account;
+import android.accounts.AccountManager;
 import android.app.SearchManager;
 import android.content.Context;
+import android.content.Intent;
 import android.os.Bundle;
 import android.support.v4.app.Fragment;
 import android.support.v4.app.FragmentManager;
 import android.support.v4.app.LoaderManager;
+import android.support.v4.content.IntentCompat;
 import android.support.v4.content.Loader;
 import android.support.v4.view.MenuItemCompat;
 import android.support.v4.widget.DrawerLayout;
@@ -16,8 +22,14 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.Window;
 
+import com.alorma.github.basesdk.client.StoreCredentials;
+import com.alorma.github.sdk.bean.dto.response.Organization;
+import com.alorma.github.sdk.bean.dto.response.User;
+import com.alorma.github.sdk.login.AccountsHelper;
+import com.bugsnag.android.Bugsnag;
 import com.github.pockethub.R;
 import com.github.pockethub.accounts.AccountUtils;
+import com.github.pockethub.accounts.LoginActivity;
 import com.github.pockethub.core.user.UserComparator;
 import com.github.pockethub.persistence.AccountDataManager;
 import com.github.pockethub.ui.gist.GistsPagerFragment;
@@ -32,10 +44,10 @@ import com.google.inject.Provider;
 import java.util.Collections;
 import java.util.List;
 
-import org.eclipse.egit.github.core.User;
+import static com.github.pockethub.ui.NavigationDrawerObject.TYPE_SEPERATOR;
 
 public class MainActivity extends BaseActivity implements NavigationDrawerFragment.NavigationDrawerCallbacks,
-    LoaderManager.LoaderCallbacks<List<User>> {
+    LoaderManager.LoaderCallbacks<List<Organization>> {
 
     private static final String TAG = "MainActivity";
 
@@ -47,11 +59,11 @@ public class MainActivity extends BaseActivity implements NavigationDrawerFragme
     @Inject
     private Provider<UserComparator> userComparatorProvider;
 
-    private List<User> orgs = Collections.emptyList();
+    private List<Organization> orgs = Collections.emptyList();
 
     private NavigationDrawerAdapter navigationAdapter;
 
-    private User org;
+    private Organization org;
 
     @Inject
     private AvatarLoader avatars;
@@ -59,13 +71,29 @@ public class MainActivity extends BaseActivity implements NavigationDrawerFragme
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        Bugsnag.init(this);
         setContentView(R.layout.activity_main);
+
         setSupportActionBar((android.support.v7.widget.Toolbar) findViewById(R.id.toolbar));
 
         getSupportLoaderManager().initLoader(0, null, this);
 
         mNavigationDrawerFragment = (NavigationDrawerFragment)
             getSupportFragmentManager().findFragmentById(R.id.navigation_drawer);
+
+        StoreCredentials storeCredentials = new StoreCredentials(this);
+
+        if(storeCredentials.token() == null){
+            AccountManager manager = AccountManager.get(this);
+            Account[] accounts = manager.getAccountsByType(getString(R.string.account_type));
+            if(accounts.length > 0) {
+                Account account = accounts[0];
+                AccountsHelper.getUserToken(this, account);
+                storeCredentials.storeToken(AccountsHelper.getUserToken(this, account));
+                storeCredentials.storeUsername(account.name);
+                storeCredentials.storeScopes(AccountsHelper.getUserScopes(this, account));
+            }
+        }
     }
 
     private void reloadOrgs() {
@@ -90,20 +118,20 @@ public class MainActivity extends BaseActivity implements NavigationDrawerFragme
 
         // Restart loader if default account doesn't match currently loaded
         // account
-        List<User> currentOrgs = orgs;
+        List<Organization> currentOrgs = orgs;
         if (currentOrgs != null && !currentOrgs.isEmpty()
             && !AccountUtils.isUser(this, currentOrgs.get(0)))
             reloadOrgs();
     }
 
     @Override
-    public Loader<List<User>> onCreateLoader(int i, Bundle bundle) {
+    public Loader<List<Organization>> onCreateLoader(int i, Bundle bundle) {
         return new OrganizationLoader(this, accountDataManager,
             userComparatorProvider);
     }
 
     @Override
-    public void onLoadFinished(Loader<List<User>> listLoader, final List<User> orgs) {
+    public void onLoadFinished(Loader<List<Organization>> listLoader, final List<Organization> orgs) {
         if (orgs.isEmpty())
             return;
 
@@ -136,7 +164,7 @@ public class MainActivity extends BaseActivity implements NavigationDrawerFragme
     }
 
     @Override
-    public void onLoaderReset(Loader<List<User>> listLoader) {
+    public void onLoaderReset(Loader<List<Organization>> listLoader) {
 
     }
 
@@ -150,7 +178,7 @@ public class MainActivity extends BaseActivity implements NavigationDrawerFragme
         switch (position) {
             case 1:
                 fragment = new HomePagerFragment();
-                args.putSerializable("org", org);
+                args.putParcelable("org", org);
                 break;
             case 2:
                 fragment = new GistsPagerFragment();
@@ -161,9 +189,22 @@ public class MainActivity extends BaseActivity implements NavigationDrawerFragme
             case 4:
                 fragment = new FilterListFragment();
                 break;
+            case 5:
+                Account[] allAccounts = AccountManager.get(this).getAccounts();
+
+                for (Account account : allAccounts) {
+                    AccountManager.get(this).removeAccount(account, null, null);
+                }
+
+                Intent in = new Intent(this, LoginActivity.class);
+                in.addFlags(IntentCompat.FLAG_ACTIVITY_CLEAR_TASK
+                        | Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(in);
+                finish();
+                return;
             default:
                 fragment = new HomePagerFragment();
-                args.putSerializable("org", orgs.get(position - 6));
+                args.putParcelable("org", orgs.get(position - 6));
                 break;
         }
         fragment.setArguments(args);
